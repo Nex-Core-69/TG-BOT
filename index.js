@@ -1,4 +1,4 @@
-// index.js - Temp Mail Bot with Web Server for Render (FIXED)
+// index.js - Temp Mail Bot with Web Server (FIXED 409 Conflict)
 const { Telegraf, Markup } = require("telegraf");
 const axios = require("axios");
 const moment = require("moment");
@@ -24,12 +24,8 @@ app.listen(PORT, () => {
 // Bot Token
 const BOT_TOKEN = "8776602557:AAFpOEin4r8vT2hZy84wOOyZls45Sba3Ky0";
 
-// Create bot with polling options
-const bot = new Telegraf(BOT_TOKEN, {
-    polling: {
-        timeout: 30
-    }
-});
+// Create bot with webhook instead of polling (Fixes 409 Conflict)
+const bot = new Telegraf(BOT_TOKEN);
 
 // Store user data
 const userSessions = {};
@@ -398,7 +394,6 @@ bot.hears(/^▶ \d+\./, async (ctx) => {
 bot.hears('◀ Back to Inbox', async (ctx) => {
     try {
         await ctx.reply("Returning to inbox...");
-        // Trigger inbox again
         const userId = ctx.from.id;
         const session = userSessions[userId];
         
@@ -625,17 +620,37 @@ bot.catch((err, ctx) => {
     }
 });
 
-// ==================== LAUNCH BOT ====================
-bot.launch()
+// ==================== LAUNCH BOT WITH WEBHOOK ====================
+// Use webhook instead of polling to avoid 409 conflict
+const WEBHOOK_URL = process.env.RENDER_EXTERNAL_URL || 'https://tg-bot-89v8.onrender.com';
+
+bot.telegram.setWebhook(`${WEBHOOK_URL}/webhook`)
     .then(() => {
-        console.log("✅ Temp Mail Bot Started Successfully!");
-        console.log(`📅 Started at: ${new Date().toLocaleString()}`);
-        console.log("🤖 Bot is ready to receive messages!");
+        console.log('✅ Webhook set successfully!');
     })
     .catch((err) => {
-        console.error("❌ Failed to start bot:", err);
-        process.exit(1);
+        console.error('❌ Failed to set webhook:', err.message);
+        // Fallback to polling if webhook fails
+        console.log('Falling back to polling...');
+        bot.launch()
+            .then(() => {
+                console.log('✅ Bot started with polling!');
+            })
+            .catch((err) => {
+                console.error('❌ Failed to start bot:', err);
+                process.exit(1);
+            });
     });
+
+// Webhook endpoint for Render
+app.use(bot.webhookCallback('/webhook'));
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.status(200).send('OK');
+});
+
+console.log('🚀 Temp Mail Bot is running...');
 
 // Graceful shutdown
 process.once("SIGINT", () => {
@@ -646,5 +661,3 @@ process.once("SIGTERM", () => {
     bot.stop("SIGTERM");
     process.exit(0);
 });
-
-console.log("🚀 Temp Mail Bot is running...");
