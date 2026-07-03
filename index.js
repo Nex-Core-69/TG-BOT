@@ -1,4 +1,4 @@
-// index.js - Temp Mail Bot with Web Server (FIXED 409 Conflict)
+// index.js - Temp Mail Bot with Web Server (STABLE VERSION)
 const { Telegraf, Markup } = require("telegraf");
 const axios = require("axios");
 const moment = require("moment");
@@ -24,8 +24,50 @@ app.listen(PORT, () => {
 // Bot Token
 const BOT_TOKEN = "8776602557:AAFpOEin4r8vT2hZy84wOOyZls45Sba3Ky0";
 
-// Create bot with webhook instead of polling (Fixes 409 Conflict)
+// Bot with polling - disable webhook first
 const bot = new Telegraf(BOT_TOKEN);
+
+// ==================== DISABLE WEBHOOK FIRST ====================
+async function disableWebhook() {
+    try {
+        await bot.telegram.setWebhook('');
+        console.log('✅ Webhook disabled successfully!');
+        return true;
+    } catch (error) {
+        console.log('Webhook disable error:', error.message);
+        return false;
+    }
+}
+
+// ==================== START BOT WITH POLLING ====================
+async function startBot() {
+    try {
+        // First disable any existing webhook
+        await disableWebhook();
+        
+        // Wait a moment
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Start with polling
+        await bot.launch({
+            polling: {
+                timeout: 10,
+                limit: 100,
+                retryTimeout: 5000
+            }
+        });
+        
+        console.log('✅ Bot started successfully with polling!');
+        console.log(`📅 Started at: ${new Date().toLocaleString()}`);
+        console.log('🤖 Bot is ready to receive messages!');
+    } catch (error) {
+        console.error('❌ Failed to start bot:', error.message);
+        
+        // Retry after 5 seconds
+        console.log('🔄 Retrying in 5 seconds...');
+        setTimeout(startBot, 5000);
+    }
+}
 
 // Store user data
 const userSessions = {};
@@ -620,37 +662,9 @@ bot.catch((err, ctx) => {
     }
 });
 
-// ==================== LAUNCH BOT WITH WEBHOOK ====================
-// Use webhook instead of polling to avoid 409 conflict
-const WEBHOOK_URL = process.env.RENDER_EXTERNAL_URL || 'https://tg-bot-89v8.onrender.com';
-
-bot.telegram.setWebhook(`${WEBHOOK_URL}/webhook`)
-    .then(() => {
-        console.log('✅ Webhook set successfully!');
-    })
-    .catch((err) => {
-        console.error('❌ Failed to set webhook:', err.message);
-        // Fallback to polling if webhook fails
-        console.log('Falling back to polling...');
-        bot.launch()
-            .then(() => {
-                console.log('✅ Bot started with polling!');
-            })
-            .catch((err) => {
-                console.error('❌ Failed to start bot:', err);
-                process.exit(1);
-            });
-    });
-
-// Webhook endpoint for Render
-app.use(bot.webhookCallback('/webhook'));
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-    res.status(200).send('OK');
-});
-
-console.log('🚀 Temp Mail Bot is running...');
+// ==================== START BOT ====================
+// Start the bot with retry logic
+startBot();
 
 // Graceful shutdown
 process.once("SIGINT", () => {
@@ -661,3 +675,5 @@ process.once("SIGTERM", () => {
     bot.stop("SIGTERM");
     process.exit(0);
 });
+
+console.log('🚀 Temp Mail Bot is running...');
