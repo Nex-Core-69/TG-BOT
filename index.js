@@ -1,9 +1,28 @@
-// index.js - Temp Mail Bot with Clean Design (No AI-style formatting)
+// index.js - Temp Mail Bot with Web Server for Render
 const { Telegraf, Markup } = require("telegraf");
 const axios = require("axios");
 const moment = require("moment");
+const express = require("express");
 
-const bot = new Telegraf(process.env.BOT_TOKEN || "8776602557:AAFpOEin4r8vT2hZy84wOOyZls45Sba3Ky0");
+// ==================== WEB SERVER FOR RENDER ====================
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+    res.send('Temp Mail Bot is running!');
+});
+
+app.get('/health', (req, res) => {
+    res.status(200).send('OK');
+});
+
+// Start web server
+app.listen(PORT, () => {
+    console.log(`Web server running on port ${PORT}`);
+});
+// ===============================================================
+
+const bot = new Telegraf("8776602557:AAFpOEin4r8vT2hZy84wOOyZls45Sba3Ky0");
 
 // Store user data
 const userSessions = {};
@@ -38,12 +57,6 @@ const mainKeyboard = () => {
         ['✦ Create New Email', '✦ My Inbox'],
         ['✦ Refresh Inbox', '✦ New Email'],
         ['✦ Delete Email', '✦ Help']
-    ]).resize(true);
-};
-
-const backKeyboard = () => {
-    return Markup.keyboard([
-        ['◀ Main Menu']
     ]).resize(true);
 };
 
