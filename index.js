@@ -1,4 +1,4 @@
-// index.js - Temp Mail Bot with Web Server for Render
+// index.js - Temp Mail Bot with Web Server for Render (FIXED)
 const { Telegraf, Markup } = require("telegraf");
 const axios = require("axios");
 const moment = require("moment");
@@ -16,13 +16,20 @@ app.get('/health', (req, res) => {
     res.status(200).send('OK');
 });
 
-// Start web server
 app.listen(PORT, () => {
     console.log(`Web server running on port ${PORT}`);
 });
 // ===============================================================
 
-const bot = new Telegraf("8776602557:AAFpOEin4r8vT2hZy84wOOyZls45Sba3Ky0");
+// Bot Token
+const BOT_TOKEN = "8776602557:AAFpOEin4r8vT2hZy84wOOyZls45Sba3Ky0";
+
+// Create bot with polling options
+const bot = new Telegraf(BOT_TOKEN, {
+    polling: {
+        timeout: 30
+    }
+});
 
 // Store user data
 const userSessions = {};
@@ -77,6 +84,7 @@ async function createTempEmail() {
         );
         return response.data;
     } catch (error) {
+        console.log("API Error (create):", error.message);
         return { email: generateEmail(), token: generateRandomString(20) };
     }
 }
@@ -95,6 +103,7 @@ async function getMessages(email) {
         );
         return response.data || [];
     } catch (error) {
+        console.log("API Error (get messages):", error.message);
         return [];
     }
 }
@@ -115,6 +124,7 @@ async function deleteEmail(email, token) {
         );
         return response.data;
     } catch (error) {
+        console.log("API Error (delete):", error.message);
         return null;
     }
 }
@@ -153,9 +163,12 @@ function formatInboxSummary(messages, email) {
     return summary;
 }
 
-// Bot Start
+// ==================== BOT COMMANDS ====================
+
+// Start command
 bot.start(async (ctx) => {
-    const welcomeMessage = `
+    try {
+        const welcomeMessage = `
 Welcome to Temp Mail Bot
 
 Your secure temporary email service right in Telegram.
@@ -168,257 +181,375 @@ Features:
 • 100% anonymous and secure
 
 Use the buttons below to get started.
-    `;
-    
-    await ctx.reply(welcomeMessage, mainKeyboard());
+        `;
+        
+        await ctx.reply(welcomeMessage, mainKeyboard());
+        console.log(`User ${ctx.from.id} started the bot`);
+    } catch (error) {
+        console.error("Start error:", error);
+    }
 });
+
+// Help command
+bot.help(async (ctx) => {
+    try {
+        const helpMessage = `
+Temp Mail Bot - Help
+
+How to use:
+1. Click "Create New Email" to generate a temp email
+2. Share this email to receive messages
+3. Click "My Inbox" to check for new messages
+4. Click "Refresh Inbox" to update inbox
+5. Click "Delete Email" when done
+
+Features:
+• Temporary email addresses
+• Read incoming messages
+• Auto-refresh inbox
+• Delete emails
+• 100% anonymous
+
+Privacy:
+All data is automatically deleted after 2 hours.
+        `;
+        
+        await ctx.reply(helpMessage, mainKeyboard());
+    } catch (error) {
+        console.error("Help error:", error);
+    }
+});
+
+// ==================== BOT ACTIONS (Text Handlers) ====================
 
 // Create New Email
 bot.hears('✦ Create New Email', async (ctx) => {
-    const userId = ctx.from.id;
-    
-    if (userSessions[userId] && userSessions[userId].email) {
+    try {
+        const userId = ctx.from.id;
+        
+        if (userSessions[userId] && userSessions[userId].email) {
+            await ctx.reply(
+                `You already have an active email\n\nEmail: ${userSessions[userId].email}\n\nDo you want to create a new one?`,
+                Markup.keyboard([
+                    ['✓ Yes, Create New'],
+                    ['✗ No, Keep Current'],
+                    ['◀ Main Menu']
+                ]).resize(true)
+            );
+            return;
+        }
+        
+        await ctx.reply("Creating email...");
+        
+        const result = await createTempEmail();
+        const email = result.email || generateEmail();
+        
+        userSessions[userId] = {
+            email: email,
+            token: result.token || "",
+            created: Date.now(),
+            lastChecked: Date.now(),
+            messages: []
+        };
+        
         await ctx.reply(
-            `You already have an active email\n\nEmail: ${userSessions[userId].email}\n\nDo you want to create a new one?`,
+            `Email Created Successfully!\n\nEmail: ${email}\n\nShare this email to receive messages\nClick "My Inbox" to check for new messages\nEmail auto-expires after 2 hours`,
+            mainKeyboard()
+        );
+    } catch (error) {
+        console.error("Create email error:", error);
+        await ctx.reply("Failed to create email. Please try again.", mainKeyboard());
+    }
+});
+
+// Yes, Create New
+bot.hears('✓ Yes, Create New', async (ctx) => {
+    try {
+        const userId = ctx.from.id;
+        
+        if (userSessions[userId]) {
+            await deleteEmail(userSessions[userId].email, userSessions[userId].token || "");
+            delete userSessions[userId];
+            delete userMessageCache[userId];
+        }
+        
+        await ctx.reply("Creating new email...");
+        
+        const result = await createTempEmail();
+        const email = result.email || generateEmail();
+        
+        userSessions[userId] = {
+            email: email,
+            token: result.token || "",
+            created: Date.now(),
+            lastChecked: Date.now(),
+            messages: []
+        };
+        
+        await ctx.reply(
+            `New Email Created!\n\nEmail: ${email}\n\nReady to receive messages.`,
+            mainKeyboard()
+        );
+    } catch (error) {
+        console.error("Confirm create error:", error);
+        await ctx.reply("Failed to create email. Please try again.", mainKeyboard());
+    }
+});
+
+// No, Keep Current
+bot.hears('✗ No, Keep Current', async (ctx) => {
+    try {
+        const userId = ctx.from.id;
+        const session = userSessions[userId];
+        
+        if (session && session.email) {
+            await ctx.reply(
+                `Keeping current email:\nEmail: ${session.email}`,
+                mainKeyboard()
+            );
+        } else {
+            await ctx.reply("No active email found.", mainKeyboard());
+        }
+    } catch (error) {
+        console.error("Keep current error:", error);
+        await ctx.reply("Error. Please try again.", mainKeyboard());
+    }
+});
+
+// My Inbox
+bot.hears('✦ My Inbox', async (ctx) => {
+    try {
+        const userId = ctx.from.id;
+        const session = userSessions[userId];
+        
+        if (!session || !session.email) {
+            await ctx.reply(
+                "No active email.\n\nCreate one first!",
+                mainKeyboard()
+            );
+            return;
+        }
+        
+        await ctx.reply("Fetching inbox...");
+        
+        const messages = await getMessages(session.email);
+        session.messages = messages || [];
+        session.lastChecked = Date.now();
+        userMessageCache[userId] = messages || [];
+        
+        if (!messages || messages.length === 0) {
+            await ctx.reply(
+                `Inbox is empty\n\nEmail: ${session.email}\n\nNo messages received yet.`,
+                mainKeyboard()
+            );
+            return;
+        }
+        
+        const inboxMessage = formatInboxSummary(messages, session.email);
+        
+        const messageButtons = [];
+        messages.slice(0, 5).forEach((msg, index) => {
+            const label = msg.subject ? 
+                `▶ ${index + 1}. ${msg.subject.substring(0, 20)}` : 
+                `▶ Message ${index + 1}`;
+            messageButtons.push([label]);
+        });
+        
+        messageButtons.push(['◀ Main Menu']);
+        
+        await ctx.reply(inboxMessage, Markup.keyboard(messageButtons).resize(true));
+    } catch (error) {
+        console.error("Inbox error:", error);
+        await ctx.reply("Failed to fetch inbox. Please try again.", mainKeyboard());
+    }
+});
+
+// Read Messages
+bot.hears(/^▶ \d+\./, async (ctx) => {
+    try {
+        const userId = ctx.from.id;
+        const text = ctx.message.text;
+        
+        const match = text.match(/^▶ (\d+)\./);
+        if (!match) return;
+        
+        const index = parseInt(match[1]) - 1;
+        const messages = userMessageCache[userId] || [];
+        
+        if (index < 0 || index >= messages.length) {
+            await ctx.reply("Message not found", mainKeyboard());
+            return;
+        }
+        
+        const msg = messages[index];
+        const formattedMessage = formatMessage(msg);
+        
+        await ctx.reply(formattedMessage, Markup.keyboard([
+            ['◀ Back to Inbox'],
+            ['◀ Main Menu']
+        ]).resize(true));
+    } catch (error) {
+        console.error("Read message error:", error);
+        await ctx.reply("Failed to read message. Please try again.", mainKeyboard());
+    }
+});
+
+// Back to Inbox
+bot.hears('◀ Back to Inbox', async (ctx) => {
+    try {
+        await ctx.reply("Returning to inbox...");
+        // Trigger inbox again
+        const userId = ctx.from.id;
+        const session = userSessions[userId];
+        
+        if (!session || !session.email) {
+            await ctx.reply("No active email.", mainKeyboard());
+            return;
+        }
+        
+        const messages = await getMessages(session.email);
+        session.messages = messages || [];
+        userMessageCache[userId] = messages || [];
+        
+        if (!messages || messages.length === 0) {
+            await ctx.reply(
+                `Inbox is empty\n\nEmail: ${session.email}`,
+                mainKeyboard()
+            );
+            return;
+        }
+        
+        const inboxMessage = formatInboxSummary(messages, session.email);
+        const messageButtons = [];
+        messages.slice(0, 5).forEach((msg, index) => {
+            const label = msg.subject ? 
+                `▶ ${index + 1}. ${msg.subject.substring(0, 20)}` : 
+                `▶ Message ${index + 1}`;
+            messageButtons.push([label]);
+        });
+        messageButtons.push(['◀ Main Menu']);
+        
+        await ctx.reply(inboxMessage, Markup.keyboard(messageButtons).resize(true));
+    } catch (error) {
+        console.error("Back to inbox error:", error);
+        await ctx.reply("Error. Please try again.", mainKeyboard());
+    }
+});
+
+// Refresh Inbox
+bot.hears('✦ Refresh Inbox', async (ctx) => {
+    try {
+        const userId = ctx.from.id;
+        const session = userSessions[userId];
+        
+        if (!session || !session.email) {
+            await ctx.reply(
+                "No active email.\n\nCreate one first!",
+                mainKeyboard()
+            );
+            return;
+        }
+        
+        await ctx.reply("Refreshing...");
+        
+        const messages = await getMessages(session.email);
+        const newCount = messages ? messages.length : 0;
+        const oldCount = session.messages ? session.messages.length : 0;
+        const difference = newCount - oldCount;
+        
+        session.messages = messages || [];
+        session.lastChecked = Date.now();
+        userMessageCache[userId] = messages || [];
+        
+        let response = `Inbox Refreshed!\n\n`;
+        response += `Email: ${session.email}\n`;
+        response += `Messages: ${newCount}\n`;
+        
+        if (difference > 0) {
+            response += `\n${difference} new message${difference > 1 ? 's' : ''}!`;
+        } else if (difference === 0) {
+            response += `\nNo new messages`;
+        }
+        
+        await ctx.reply(response, mainKeyboard());
+    } catch (error) {
+        console.error("Refresh error:", error);
+        await ctx.reply("Failed to refresh. Please try again.", mainKeyboard());
+    }
+});
+
+// New Email
+bot.hears('✦ New Email', async (ctx) => {
+    try {
+        await ctx.reply(
+            `Generate New Email\n\nThis will create a brand new email address.\nCurrent email will be automatically deleted.\n\nAre you sure?`,
             Markup.keyboard([
                 ['✓ Yes, Create New'],
                 ['✗ No, Keep Current'],
                 ['◀ Main Menu']
             ]).resize(true)
         );
-        return;
+    } catch (error) {
+        console.error("New email error:", error);
+        await ctx.reply("Error. Please try again.", mainKeyboard());
     }
-    
-    await ctx.reply("Creating email...");
-    
-    const result = await createTempEmail();
-    const email = result.email || generateEmail();
-    
-    userSessions[userId] = {
-        email: email,
-        token: result.token || "",
-        created: Date.now(),
-        lastChecked: Date.now(),
-        messages: []
-    };
-    
-    await ctx.reply(
-        `Email Created Successfully!\n\nEmail: ${email}\n\nShare this email to receive messages\nClick "My Inbox" to check for new messages\nEmail auto-expires after 2 hours`,
-        mainKeyboard()
-    );
-});
-
-// Yes, Create New
-bot.hears('✓ Yes, Create New', async (ctx) => {
-    const userId = ctx.from.id;
-    
-    if (userSessions[userId]) {
-        await deleteEmail(userSessions[userId].email, userSessions[userId].token || "");
-        delete userSessions[userId];
-        delete userMessageCache[userId];
-    }
-    
-    await ctx.reply("Creating new email...");
-    
-    const result = await createTempEmail();
-    const email = result.email || generateEmail();
-    
-    userSessions[userId] = {
-        email: email,
-        token: result.token || "",
-        created: Date.now(),
-        lastChecked: Date.now(),
-        messages: []
-    };
-    
-    await ctx.reply(
-        `New Email Created!\n\nEmail: ${email}\n\nReady to receive messages.`,
-        mainKeyboard()
-    );
-});
-
-// No, Keep Current
-bot.hears('✗ No, Keep Current', async (ctx) => {
-    const userId = ctx.from.id;
-    const session = userSessions[userId];
-    
-    if (session && session.email) {
-        await ctx.reply(
-            `Keeping current email:\nEmail: ${session.email}`,
-            mainKeyboard()
-        );
-    } else {
-        await ctx.reply("No active email found.", mainKeyboard());
-    }
-});
-
-// My Inbox
-bot.hears('✦ My Inbox', async (ctx) => {
-    const userId = ctx.from.id;
-    const session = userSessions[userId];
-    
-    if (!session || !session.email) {
-        await ctx.reply(
-            "No active email.\n\nCreate one first!",
-            mainKeyboard()
-        );
-        return;
-    }
-    
-    await ctx.reply("Fetching inbox...");
-    
-    const messages = await getMessages(session.email);
-    session.messages = messages || [];
-    session.lastChecked = Date.now();
-    userMessageCache[userId] = messages || [];
-    
-    if (!messages || messages.length === 0) {
-        await ctx.reply(
-            `Inbox is empty\n\nEmail: ${session.email}\n\nNo messages received yet.`,
-            mainKeyboard()
-        );
-        return;
-    }
-    
-    const inboxMessage = formatInboxSummary(messages, session.email);
-    
-    const messageButtons = [];
-    messages.slice(0, 5).forEach((msg, index) => {
-        const label = msg.subject ? 
-            `▶ ${index + 1}. ${msg.subject.substring(0, 20)}` : 
-            `▶ Message ${index + 1}`;
-        messageButtons.push([label]);
-    });
-    
-    messageButtons.push(['◀ Main Menu']);
-    
-    await ctx.reply(inboxMessage, Markup.keyboard(messageButtons).resize(true));
-});
-
-// Read Messages
-bot.hears(/^▶ \d+\./, async (ctx) => {
-    const userId = ctx.from.id;
-    const text = ctx.message.text;
-    
-    const match = text.match(/^▶ (\d+)\./);
-    if (!match) return;
-    
-    const index = parseInt(match[1]) - 1;
-    const messages = userMessageCache[userId] || [];
-    
-    if (index < 0 || index >= messages.length) {
-        await ctx.reply("Message not found", mainKeyboard());
-        return;
-    }
-    
-    const msg = messages[index];
-    const formattedMessage = formatMessage(msg);
-    
-    await ctx.reply(formattedMessage, Markup.keyboard([
-        ['◀ Back to Inbox'],
-        ['◀ Main Menu']
-    ]).resize(true));
-});
-
-// Back to Inbox
-bot.hears('◀ Back to Inbox', async (ctx) => {
-    await ctx.reply("Returning to inbox...");
-    await bot.hears('✦ My Inbox')(ctx);
-});
-
-// Refresh Inbox
-bot.hears('✦ Refresh Inbox', async (ctx) => {
-    const userId = ctx.from.id;
-    const session = userSessions[userId];
-    
-    if (!session || !session.email) {
-        await ctx.reply(
-            "No active email.\n\nCreate one first!",
-            mainKeyboard()
-        );
-        return;
-    }
-    
-    await ctx.reply("Refreshing...");
-    
-    const messages = await getMessages(session.email);
-    const newCount = messages ? messages.length : 0;
-    const oldCount = session.messages ? session.messages.length : 0;
-    const difference = newCount - oldCount;
-    
-    session.messages = messages || [];
-    session.lastChecked = Date.now();
-    userMessageCache[userId] = messages || [];
-    
-    let response = `Inbox Refreshed!\n\n`;
-    response += `Email: ${session.email}\n`;
-    response += `Messages: ${newCount}\n`;
-    
-    if (difference > 0) {
-        response += `\n${difference} new message${difference > 1 ? 's' : ''}!`;
-    } else if (difference === 0) {
-        response += `\nNo new messages`;
-    }
-    
-    await ctx.reply(response, mainKeyboard());
-});
-
-// New Email
-bot.hears('✦ New Email', async (ctx) => {
-    await ctx.reply(
-        `Generate New Email\n\nThis will create a brand new email address.\nCurrent email will be automatically deleted.\n\nAre you sure?`,
-        Markup.keyboard([
-            ['✓ Yes, Create New'],
-            ['✗ No, Keep Current'],
-            ['◀ Main Menu']
-        ]).resize(true)
-    );
 });
 
 // Delete Email
 bot.hears('✦ Delete Email', async (ctx) => {
-    const userId = ctx.from.id;
-    const session = userSessions[userId];
-    
-    if (!session || !session.email) {
+    try {
+        const userId = ctx.from.id;
+        const session = userSessions[userId];
+        
+        if (!session || !session.email) {
+            await ctx.reply(
+                "No active email to delete.",
+                mainKeyboard()
+            );
+            return;
+        }
+        
         await ctx.reply(
-            "No active email to delete.",
-            mainKeyboard()
+            `Delete Email\n\nAre you sure you want to delete:\nEmail: ${session.email}\n\nThis action cannot be undone!`,
+            Markup.keyboard([
+                ['✗ Yes, Delete'],
+                ['✗ No, Keep Current'],
+                ['◀ Main Menu']
+            ]).resize(true)
         );
-        return;
+    } catch (error) {
+        console.error("Delete email error:", error);
+        await ctx.reply("Error. Please try again.", mainKeyboard());
     }
-    
-    await ctx.reply(
-        `Delete Email\n\nAre you sure you want to delete:\nEmail: ${session.email}\n\nThis action cannot be undone!`,
-        Markup.keyboard([
-            ['✗ Yes, Delete'],
-            ['✗ No, Keep Current'],
-            ['◀ Main Menu']
-        ]).resize(true)
-    );
 });
 
 // Yes, Delete
 bot.hears('✗ Yes, Delete', async (ctx) => {
-    const userId = ctx.from.id;
-    const session = userSessions[userId];
-    
-    if (session) {
-        await ctx.reply("Deleting email...");
-        await deleteEmail(session.email, session.token || "");
-        delete userSessions[userId];
-        delete userMessageCache[userId];
+    try {
+        const userId = ctx.from.id;
+        const session = userSessions[userId];
+        
+        if (session) {
+            await ctx.reply("Deleting email...");
+            await deleteEmail(session.email, session.token || "");
+            delete userSessions[userId];
+            delete userMessageCache[userId];
+        }
+        
+        await ctx.reply(
+            `Email Deleted Successfully!\n\nYour temporary email has been removed.\nClick below to create a new one.`,
+            mainKeyboard()
+        );
+    } catch (error) {
+        console.error("Confirm delete error:", error);
+        await ctx.reply("Failed to delete email. Please try again.", mainKeyboard());
     }
-    
-    await ctx.reply(
-        `Email Deleted Successfully!\n\nYour temporary email has been removed.\nClick below to create a new one.`,
-        mainKeyboard()
-    );
 });
 
 // Help
 bot.hears('✦ Help', async (ctx) => {
-    const helpMessage = `
+    try {
+        const helpMessage = `
 Temp Mail Bot - Help
 
 How to use:
@@ -440,30 +571,38 @@ Commands:
 
 Privacy:
 All data is automatically deleted after 2 hours.
-    `;
-    
-    await ctx.reply(helpMessage, mainKeyboard());
+        `;
+        
+        await ctx.reply(helpMessage, mainKeyboard());
+    } catch (error) {
+        console.error("Help error:", error);
+    }
 });
 
 // Main Menu
 bot.hears('◀ Main Menu', async (ctx) => {
-    const userId = ctx.from.id;
-    const session = userSessions[userId];
-    
-    let menuText = "Main Menu\n\n";
-    if (session && session.email) {
-        const messages = await getMessages(session.email);
-        menuText += `Current Email: ${session.email}\n`;
-        menuText += `Messages: ${messages ? messages.length : 0}\n\n`;
-    } else {
-        menuText += "No active email. Create one to get started.\n\n";
+    try {
+        const userId = ctx.from.id;
+        const session = userSessions[userId];
+        
+        let menuText = "Main Menu\n\n";
+        if (session && session.email) {
+            const messages = await getMessages(session.email);
+            menuText += `Current Email: ${session.email}\n`;
+            menuText += `Messages: ${messages ? messages.length : 0}\n\n`;
+        } else {
+            menuText += "No active email. Create one to get started.\n\n";
+        }
+        menuText += "Choose an option below:";
+        
+        await ctx.reply(menuText, mainKeyboard());
+    } catch (error) {
+        console.error("Main menu error:", error);
+        await ctx.reply("Main Menu", mainKeyboard());
     }
-    menuText += "Choose an option below:";
-    
-    await ctx.reply(menuText, mainKeyboard());
 });
 
-// Auto-cleanup expired sessions
+// ==================== AUTO CLEANUP ====================
 setInterval(async () => {
     const now = Date.now();
     for (const [userId, session] of Object.entries(userSessions)) {
@@ -473,11 +612,12 @@ setInterval(async () => {
             } catch (e) {}
             delete userSessions[userId];
             delete userMessageCache[userId];
+            console.log(`Cleaned up expired session for user ${userId}`);
         }
     }
 }, 120000);
 
-// Error handling
+// ==================== ERROR HANDLING ====================
 bot.catch((err, ctx) => {
     console.error("Bot error:", err.message);
     if (ctx && ctx.reply) {
@@ -485,18 +625,26 @@ bot.catch((err, ctx) => {
     }
 });
 
-// Launch bot
+// ==================== LAUNCH BOT ====================
 bot.launch()
     .then(() => {
-        console.log("Temp Mail Bot Started Successfully!");
-        console.log(`Started at: ${new Date().toLocaleString()}`);
+        console.log("✅ Temp Mail Bot Started Successfully!");
+        console.log(`📅 Started at: ${new Date().toLocaleString()}`);
+        console.log("🤖 Bot is ready to receive messages!");
     })
     .catch((err) => {
-        console.error("Failed to start bot:", err);
+        console.error("❌ Failed to start bot:", err);
         process.exit(1);
     });
 
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
+// Graceful shutdown
+process.once("SIGINT", () => {
+    bot.stop("SIGINT");
+    process.exit(0);
+});
+process.once("SIGTERM", () => {
+    bot.stop("SIGTERM");
+    process.exit(0);
+});
 
-console.log("Temp Mail Bot is running...");
+console.log("🚀 Temp Mail Bot is running...");
